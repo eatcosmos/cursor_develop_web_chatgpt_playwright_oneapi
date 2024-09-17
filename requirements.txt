@@ -2,3 +2,5 @@ flask
 openai
 requests
 html2text
+mdformat # https://mdformat.readthedocs.io/en/stable/users/installation_and_usage.html#python-api-usage
+pygments
