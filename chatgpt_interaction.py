@@ -23,6 +23,11 @@ def html_to_markdown(html_content):
     h.body_width = 0  # 不自动换行
     return h.handle(html_content)
   
+def print_incremental(new_text, old_text):
+    for i in range(len(old_text), len(new_text)):
+        print(new_text[i], end='', flush=True)
+    print()  # 换行
+    
 def interact_with_chatgpt(question):
     with sync_playwright() as p:
         print("连接到已打开的 Edge 浏览器...")
@@ -68,9 +73,10 @@ def interact_with_chatgpt(question):
             new_content_markdown = html_to_markdown(new_content_html)
                 
             if new_content_markdown != response:
+                print_incremental(new_content_markdown, response)
                 response = new_content_markdown
-                print(f"部分回复 (长度: {len(response)}): {response[:100]}...")
-                time.sleep(0.1) # 0.1秒更新一次
+                # print(f"部分回复 (长度: {len(response)}): {response[:100]}...")
+                time.sleep(0.1) # 减少等待时间，使输出更流畅
             else:
                 # 检查是否出现反馈标签
                 feedback_div = last_article.locator('div.mt-1.flex.gap-3.empty\\:hidden.-ml-2')
