@@ -14,7 +14,7 @@ def 处理换行(response):
     matchstr = re.search(r'\n {4,}', response)
     if matchstr:
         response = response.replace(matchstr.group(0), '\n')
-    response = re.sub(r'(^\n{1,})', '\n', response)
+    response = re.sub(r'^(([a-zA-Z]{0,})\n{1,})', '\\2\n', response)
     response = re.sub(r'(\n{1,}$)', '\n', response)
     return response
 
@@ -225,7 +225,7 @@ class ChatGPTInteraction:
         response = re.sub(r'\n {4,}\n$', '\n```\n\n', response)
         # response = re.sub(r'\n {4,}', '\n', response) # 去除代码多余空格
         #
-        response = re.sub(r'\n {4,}\n {4,}[a-zA-Z]{1,}\n {4,}\n {4,}复制代码\n {4,}', '\n\n```\n', response)
+        response = re.sub(r'\n {4,}\n {4,}([a-zA-Z]{1,})\n {4,}\n {4,}复制代码\n {4,}', '\n\n```\\1\n', response)
         response = re.sub(r'\n {4,}\n {4,}\n {0,}复制代码\n {4,}', '\n\n```\n', response)
         #
         response = 处理代码块(response)

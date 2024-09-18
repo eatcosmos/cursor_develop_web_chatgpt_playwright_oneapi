@@ -9,22 +9,15 @@ response = re.sub(r'\n {4,}\n\n', '\n```\n\n', response)
 response = re.sub(r'\n {4,}\n$', '\n```\n\n', response)
 # response = re.sub(r'\n {4,}', '\n', response) # 去除代码多余空格
 #
-response = re.sub(r'\n {4,}\n {4,}[a-zA-Z]{1,}\n {4,}\n {4,}复制代码\n {4,}', '\n\n```\n', response)
+response = re.sub(r'\n {4,}\n {4,}([a-zA-Z]{1,})\n {4,}\n {4,}复制代码\n {4,}', '\n\n```\\1\n', response)
 response = re.sub(r'\n {4,}\n {4,}\n {0,}复制代码\n {4,}', '\n\n```\n', response)
-
-
-
-import re
-from pygments import highlight
-from pygments.lexers import guess_lexer
-from pygments.formatters import NullFormatter
 
 def 处理换行(response):
     # 正则匹配符合 r'\n {4,}' 的字符串，然后替换这个字符串为 \n
     matchstr = re.search(r'\n {4,}', response)
     if matchstr:
         response = response.replace(matchstr.group(0), '\n')
-    response = re.sub(r'(^\n{1,})', '\n', response)
+    response = re.sub(r'^(([a-zA-Z]{0,})\n{1,})', '\\2\n', response)
     response = re.sub(r'(\n{1,}$)', '\n', response)
     return response
 

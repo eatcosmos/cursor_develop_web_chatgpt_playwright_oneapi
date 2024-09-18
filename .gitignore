@@ -1,4 +1,6 @@
 __pycache__
 *.pyc
 user_data/
+apikeys.txt
+api_key.txt
 
