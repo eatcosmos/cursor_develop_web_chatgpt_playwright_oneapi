@@ -2,13 +2,21 @@ import os
 import re
 import sys
 import time
+import logging
 import html2text
 import threading
 from queue import Queue
 from playwright.sync_api import sync_playwright
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 input_box_locator = 'div[id="prompt-textarea"]'
+send_button_selector = 'button[data-testid="send-button"]'
+stop_button_selector = 'button[data-testid="stop-button"]'
+regenerate_button_selector = 'div.flex.w-full.items-center.justify-center.gap-1\\.5'
+feedback_div_locator = 'div.mt-1.flex.gap-3.empty\\:hidden.-ml-2'
+
 def 处理换行(response):
     # 正则匹配符合 r'\n {4,}' 的字符串，然后替换这个字符串为 \n
     matchstr = re.search(r'\n {4,}', response)
@@ -29,8 +37,7 @@ def 处理代码块(markdown_text):
     # 使用 sub 方法进行替换
     formatted_markdown = re.sub(pattern, replace_code_block, markdown_text)
     return formatted_markdown
-
-class ChatGPTInteraction:
+class ChatGPTInteraction:     
     def __init__(self):
         self.playwright = None
         self.browser = None
@@ -62,7 +69,6 @@ class ChatGPTInteraction:
                 if "https://chatgpt.com" in page.url:
                     self.page = page
                     print(f"找到 ChatGPT 页面: {self.page.url}")
-                    self.page.reload() # 刷新页面
                     # 等待刷新完成
                     self.等待刷新完成()
                     time.sleep(1)
@@ -70,28 +76,6 @@ class ChatGPTInteraction:
 
             if not self.page:
                 raise Exception("未找到 ChatGPT 页面，请确保已经打开并登录了 chat.openai.com")
-        # if not self.browser:
-        #     print("启动 Edge 浏览器...")
-        #     try:
-        #         self.browser = self.playwright.chromium.launch_persistent_context(
-        #             user_data_dir="./user_data",
-        #             channel="msedge",
-        #             headless=False,
-        #             args=["--start-maximized"]
-        #         )
-        #         print("成功启动浏览器")
-        #     except Exception as e:
-        #         print(f"启动浏览器时出错: {e}")
-        #         raise
-
-        # if not self.page:
-        #     print("打开 ChatGPT 页面...")
-        #     self.page = self.browser.new_page()
-        #     self.page.goto("https://chatgpt.com")
-        #     print(f"已打开 ChatGPT 页面: {self.page.url}")
-
-        # # 等待页面加载完成
-        # # self.page.wait_for_load_state("networkidle")
 
     def html_to_markdown(self, html_content):
         h = html2text.HTML2Text()
@@ -112,12 +96,9 @@ class ChatGPTInteraction:
                 self.response_queue.task_done()
 
     def click_regenerate_button(self):
-        # 定位按钮
-        button_selector = 'div.flex.w-full.items-center.justify-center.gap-1\\.5'
-        
         try:
             # 等待按钮出现
-            button = self.page.wait_for_selector(button_selector, timeout=5000)
+            button = self.page.wait_for_selector(regenerate_button_selector, timeout=5000)
             
             # 检查按钮是否包含正确的 SVG 图标
             svg = button.query_selector('svg')
@@ -137,61 +118,111 @@ class ChatGPTInteraction:
             return False
     # 根据输入框是否存在，判断等待刷新完成
     def 等待刷新完成(self):
+        self.page.reload()
         while True:
             try:
                 input_box = self.page.locator(input_box_locator)
                 if input_box.count() > 0:
+                    print("刷新完成")
                     break
-                print("等待刷新完成...")
+                print("等待刷新...")
                 time.sleep(1)
             except:
                 pass
+    def 发送按钮已经激活(self):
+        try:
+            # 定位发送按钮            
+            # 等待按钮出现，最多等待1秒
+            # send_button = self.page.wait_for_selector(send_button_selector, state='attached', timeout=1000)
+            send_button = self.page.locator(send_button_selector)
+            if send_button:
+                # 检查按钮是否被禁用
+                is_disabled = send_button.get_attribute('disabled') is not None
+                
+                if is_disabled:
+                    logger.info("发送按钮当前被禁用")
+                    return False
+                else:
+                    logger.info("发送按钮当前可用")
+                    return True
+            else:
+                logger.warning("未找到发送按钮")
+                return False
+        except Exception as e:
+            logger.exception("检查发送按钮状态时出错: %s", str(e))
+            return False
+    def 流式传输激活(self):
+        try:
+            # 等待发送按钮变成"停止流式传输"按钮
+            # 等待按钮出现，最多等待10秒
+            # self.page.wait_for_selector(stop_button_selector, state='attached', timeout=10000)
+            
+            # 如果找到了"停止流式传输"按钮，说明回复正在生成
+            stop_button = self.page.query_selector(stop_button_selector)
+            if stop_button:
+                # logger.info("回复正在生成")
+                return True
+            else:
+                # logger.warning("未检测到回复生成")
+                return False
+        except Exception as e:
+            logger.exception("等待流式传输激活时出错: %s", str(e))
+            return False
+
     def interact_with_chatgpt(self, question):
         self.connect_to_browser()
         while True:
-            try:
-                print(f"输入问题: {question}")
-                input_box = self.page.locator(input_box_locator)
-                input_box.fill(question)
-                time.sleep(0.3)
-                
-                print("点击发送")
+            print(f"\n输入问题: {question}")
+            input_box = self.page.locator(input_box_locator)
+            input_box.fill(question)
+            time.sleep(0.3) # 等待操作完成
+            #
+            if self.发送按钮已经激活():
+                print(f"发送按钮已经激活")
                 send_button = self.page.locator('button[data-testid="send-button"]')
+                print(f"点击发送")
                 send_button.click()
-                print(f"发送成功")
-                break
-            except:
-                # 刷新网页
-                self.page.reload()
-                self.等待刷新完成()
-                continue
-        # 等待回复开始
-        feedback_div_locator = 'div.mt-1.flex.gap-3.empty\\:hidden.-ml-2'
-        while True:
-            last_article = self.page.locator('article:last-child')
-            feedback_div = last_article.locator(feedback_div_locator)
-            if feedback_div.count() > 0:
-                # print("检测到反馈标签...")
-                time.sleep(0.1)
+                time.sleep(0.3) # 等待操作完成
+                流式传输激活 = False
+                start_time = time.time()
+                timeout = 60  # 设置30秒超时
+                while True:
+                    # 假设点击发送肯定成功
+                    if self.流式传输激活():
+                        print(f"流式传输激活")
+                        流式传输激活 = True
+                        break
+                    else:
+                        # print(f"流式传输未激活")
+                        time.sleep(0.1)
+                    if time.time() - start_time > timeout:
+                        print(f"流式传输超时")
+                        break
+                if 流式传输激活:
+                    break
             else:
-                print("回复激活...")
-                break
+                print(f"发送按钮无法激活")
+                self.等待刷新完成()
 
-        print("等待回复...")
+        print("等待流式传输...")
         response = ""
         # 清空 response_queue
-        self.response_queue.queue.clear()
+        # self.response_queue.queue.clear()
         start_time = time.time()
         while True:
             try:
-                last_article = self.page.locator('article:last-child')
-                new_content_html = last_article.locator(
-                    'div.markdown').inner_html()
+                while True:
+                    try:
+                        last_article = self.page.locator('article:last-child')
+                        new_content_html =      last_article.locator('div.markdown').inner_html()
+                        break
+                    except Exception as e:
+                        # print(f"获取新内容时出错: {e}")
+                        time.sleep(0.1)
                 new_content_markdown = self.html_to_markdown(new_content_html)
-
+                # print(f"new_content_markdown: {new_content_markdown}")
+                # print(f"response: {response}")
                 if new_content_markdown != response:
-                    # print(f"new_content_markdown: {new_content_markdown}")
-                    # print(f"response: {response}")
                     # response_update = f"{new_content_markdown.replace(response, '')}"
                     # if new_content_markdown == response_update:
                     #     response_update = f"{new_content_markdown.replace(response[:-1], '')}"
@@ -202,24 +233,22 @@ class ChatGPTInteraction:
                     # print(f"部分回复 (长度: {len(response)}): {response[:100]}...")
                     time.sleep(0.1)
                 else:
-                    feedback_div = last_article.locator(feedback_div_locator)
-                    if feedback_div.count() > 0:
-                        # print("\n检测到反馈标签，回复完成")
+                    if not self.流式传输激活():
+                        # print(f"流式传输结束")
                         break
                     if time.time() - start_time > 60:  # 60秒超时
-                        print("\n回复生成超时")
+                        print("\n回复超时")
                         break
                     time.sleep(0.1)
             except Exception as e:
-                print(f"\n提取回复时出错: {e}")
+                print(f"\n回复出错: {e}")
                 if time.time() - start_time > 60:  # 60秒超时
-                    print("\n回复生成超时")
+                    print("\n回复超时")
                     break
                 time.sleep(0.1)
         # self.response_queue.join()  # 等待队列中的所有任务完成
-        print("\n回复完成")
-        self.page.reload() # 刷新页面
-        self.等待刷新完成()
+        print("流式传输完成：\n")
+        # self.等待刷新完成() # 发送按钮无法激活时才刷新
         #
         response = re.sub(r'\n {4,}\n\n', '\n```\n\n', response)
         response = re.sub(r'\n {4,}\n$', '\n```\n\n', response)
@@ -232,8 +261,8 @@ class ChatGPTInteraction:
         response = re.sub(r'(\n{3,})', '\n\n', response) # 去除多余换行符
         import mdformat
         response = mdformat.text(response)      
-        print(f"{response}")
-        print(repr(response))
+        # print(f"{response}")
+        # print(repr(response))
         # 以字符串形式打印，比如换行的要打印为 \n
         
         return response.strip()
@@ -249,8 +278,11 @@ class ChatGPTInteraction:
 if __name__ == "__main__":
     chat_interaction = ChatGPTInteraction()
     try:
+        # time.sleep(1)
         while True:
-            question = input("请输入您的问题（输入 'quit' 退出）: ")
+            # 先清理终端
+            # os.system('cls' if os.name == 'nt' else 'clear') # 没用
+            question = input("\n请输入您的问题（输入 'quit' 退出）: ")
             if question.lower() == 'quit' or question.lower() == 'q':
                 break
             response = chat_interaction.interact_with_chatgpt(question)

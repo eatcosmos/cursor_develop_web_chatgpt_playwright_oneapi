@@ -1,74 +1,83 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException, Depends, Header
+from pydantic import BaseModel
+from typing import List, Optional
 from chatgpt_interaction import ChatGPTInteraction
 import time
+import asyncio
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = FastAPI()
 chat_interaction = ChatGPTInteraction()
 
-@app.route('/v1/chat/completions', methods=['POST'])
-def chat_completions():
+class Message(BaseModel):
+    role: str
+    content: str
+
+class ChatCompletionRequest(BaseModel):
+    model: str
+    messages: List[Message]
+
+class ChatCompletionResponse(BaseModel):
+    model: str
+    object: str = "chat.completion"
+    usage: dict
+    id: str
+    created: int
+    choices: List[dict]
+
+async def verify_api_key(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid or missing Authorization header")
+    api_key = authorization.split(" ")[1]
     try:
-        # Check Content-Type header
-        if request.headers.get('Content-Type') != 'application/json':
-            return jsonify({"error": "Content-Type must be application/json"}), 415
-
-        # Check Authorization header
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or not auth_header.startswith('Bearer '):
-            return jsonify({"error": "Invalid or missing Authorization header"}), 401
-
-        api_key = auth_header.split(' ')[1]
-        # Here you should validate the API key
-        # For now, we'll just check if it's not empty
-        if not api_key:
-            return jsonify({"error": "Invalid API key"}), 401
-        # 检查 api_key 是否在 apikeys.txt 种，每行是一个key
         with open('apikeys.txt', 'r') as file:
-            api_keys = file.readlines()
+            api_keys = [key.strip() for key in file.readlines()]
         if api_key not in api_keys:
-            return jsonify({"error": "Invalid API key"}), 401
+            raise HTTPException(status_code=401, detail="Invalid API key")
+    except FileNotFoundError:
+        logger.error("apikeys.txt file not found")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    return api_key
 
-        data = request.json
-        model = data.get('model', 'gpt-3.5-turbo-0125')
-        messages = data.get('messages', [])
-        
-        if not messages or messages[-1]['role'] != 'user':
-            return jsonify({"error": "Invalid messages format"}), 400
-        
-        content = messages[-1]['content']
-        response_content = chat_interaction.interact_with_chatgpt(content)
-        
-        response = {
-            "model": model,
-            "object": "chat.completion",
-            "usage": {
-                "prompt_tokens": 25,  # These are placeholder values
-                "completion_tokens": 711,
-                "total_tokens": 736
-            },
-            "id": f"chatcmpl-{int(time.time())}",
-            "created": int(time.time()),
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": None,
-                    "message": {
-                        "role": "assistant",
-                        "content": response_content
-                    },
-                    "finish_reason": "stop"
-                }
-            ]
-        }
-        
-        return jsonify(response)
+@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+async def chat_completions(request: ChatCompletionRequest, api_key: str = Depends(verify_api_key)):
+    if not request.messages or request.messages[-1].role != "user":
+        raise HTTPException(status_code=400, detail="Invalid messages format")
+    
+    content = request.messages[-1].content
+    try:
+        # 使用 asyncio.to_thread 来在后台线程中运行 interact_with_chatgpt
+        response_content = await asyncio.to_thread(chat_interaction.interact_with_chatgpt, content)
     except Exception as e:
-        logger.exception("An error occurred: %s", str(e))
-        return jsonify({"error": "Internal server error"}), 500
+        logger.exception("An error occurred while interacting with ChatGPT: %s", str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
+    
+    response = ChatCompletionResponse(
+        model=request.model,
+        usage={
+            "prompt_tokens": 25,  # These are placeholder values
+            "completion_tokens": 711,
+            "total_tokens": 736
+        },
+        id=f"chatcmpl-{int(time.time())}",
+        created=int(time.time()),
+        choices=[
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": response_content
+                },
+                "finish_reason": "stop"
+            }
+        ]
+    )
+    
+    return response
 
-if __name__ == '__main__':
-    app.run(port=5000, debug=True)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
